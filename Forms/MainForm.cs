@@ -95,7 +95,7 @@ public partial class MainForm : Form
 
     private static readonly Icon AppIcon = LoadAppIcon();
 
-    /// <summary>当前程序版本（从程序集版本号动态生成，如 v1.4.5）。</summary>
+    /// <summary>当前程序版本（从程序集版本号动态生成，如 v1.5.0）。</summary>
     private static string VersionText =>
         "v" + (typeof(MainForm).Assembly.GetName().Version?.ToString(3) ?? "?");
 
