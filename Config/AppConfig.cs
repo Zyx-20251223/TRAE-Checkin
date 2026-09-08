@@ -34,6 +34,8 @@ public class AppConfig
     public int? WindowHeight { get; set; }
     /// <summary>是否已同意首次启动的用户协议（EULA）。同意后不再弹出。</summary>
     public bool EulaAccepted { get; set; }
+    /// <summary>云端部署成功后是否已询问过用户「愿不愿意给源仓库点 star」。置 true 后不再打扰。</summary>
+    public bool StarAskedAfterDeploy { get; set; }
 
     private static string ConfigDir =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TraeCheckin");

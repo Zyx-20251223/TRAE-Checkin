@@ -196,7 +196,8 @@ public class GitHubApiClient
     }
 
     /// <summary>
-    /// 给源仓库点 star（顺手推广）。204 表示成功；owner 本人或失败时静默跳过，不影响部署流程。
+    /// 给源仓库点 star。仅在云端部署成功、用户弹窗确认愿意支持时调用，不再自动点赞。
+    /// 204 表示成功；owner 本人直接返回 true，失败返回 false（不影响部署流程）。
     /// </summary>
     public async Task<bool> StarSourceRepoAsync(string token, string login)
     {
@@ -209,7 +210,7 @@ public class GitHubApiClient
         catch { return false; }
     }
 
-    /// <summary>是否应跳过给源仓库点星</summary>
+    /// <summary>是否应跳过给源仓库点星（仓库 owner 本人给自己点星无意义）。</summary>
     public static bool ShouldSkipStar(string login)
         => !string.IsNullOrEmpty(login) && string.Equals(login, SourceOwner, StringComparison.OrdinalIgnoreCase);
 

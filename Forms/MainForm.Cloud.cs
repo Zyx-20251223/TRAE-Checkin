@@ -406,12 +406,6 @@ public partial class MainForm
             if (!await _ghApi.ForkAsync(token, login)) { HandleDeployFailure(); return; }
             SetCloudLog("fork 完成");
 
-            // 顺手给源仓库点个 star（owner 本人自动跳过，失败不影响部署）
-            if (await _ghApi.StarSourceRepoAsync(token, login))
-                SetCloudLog("已为源仓库点赞 ★");
-            else
-                SetCloudLog("为源仓库点赞失败（可忽略）");
-
             for (int i = 0; i < enabled.Count; i++)
             {
                 var acc = enabled[i];
@@ -492,6 +486,8 @@ public partial class MainForm
                 _btnCloudAction.Text = "重新部署";
                 // 同步刷新仪表盘的云端签到状态，避免停留在旧的「未部署」
                 await RefreshCloudStatusAsync();
+                // 不再自动点赞：部署成功后征询用户是否愿意给源仓库点 star
+                await AskForStarAfterDeployAsync(token, login);
             }
             else if (string.IsNullOrEmpty(conclusion))
             {
@@ -507,6 +503,28 @@ public partial class MainForm
             _cloudBusy = false;
             _btnCloudAction.Enabled = true;
         }
+    }
+
+    /// <summary>
+    /// 部署成功后弹窗征询用户是否愿意给源仓库点 star（替代原「自动顺手点赞」）。
+    /// 仅当非仓库 owner 且之前未询问过（无论同意/拒绝）才弹，避免每次重部署都打扰。
+    /// </summary>
+    private async Task AskForStarAfterDeployAsync(string token, string login)
+    {
+        if (_config.StarAskedAfterDeploy) return;
+        if (GitHubApiClient.ShouldSkipStar(login)) return;   // 仓库 owner 本人不弹
+        _config.StarAskedAfterDeploy = true;
+        _config.Save();
+        var r = MessageBox.Show(this,
+            "云端部署已完成！您的账号已托管到 GitHub Actions，每天北京时间 8:00 自动签到。\n\n" +
+            "如果觉得这个小工具好用，愿意到 GitHub 给作者点一个 star 支持一下吗？",
+            "支持一下？", MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+        if (r != DialogResult.Yes) return;
+        SetCloudLog("正在为源仓库点赞…");
+        if (await _ghApi.StarSourceRepoAsync(token, login))
+            SetCloudLog("感谢支持，已为源仓库点赞 ★");
+        else
+            SetCloudLog("为源仓库点赞失败（可忽略，不影响部署）");
     }
 
     /// <summary>部署失败统一处理：授权失效时清理本地授权并回到重新授权状态。</summary>
