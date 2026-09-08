@@ -32,6 +32,8 @@ public class AppConfig
     public int? WindowTop { get; set; }
     public int? WindowWidth { get; set; }
     public int? WindowHeight { get; set; }
+    /// <summary>是否已同意首次启动的用户协议（EULA）。同意后不再弹出。</summary>
+    public bool EulaAccepted { get; set; }
 
     private static string ConfigDir =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TraeCheckin");

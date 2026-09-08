@@ -34,6 +34,18 @@ internal static class Program
         }
 
         ApplicationConfiguration.Initialize();
+        // 首次启动须同意用户协议；不同意直接退出，同意后写入 config.json 不再询问
+        if (!AppConfig.Load().EulaAccepted)
+        {
+            using (var eula = new EulaForm())
+            {
+                if (eula.ShowDialog() != DialogResult.OK)
+                    return;
+            }
+            var cfg = AppConfig.Load();
+            cfg.EulaAccepted = true;
+            cfg.Save();
+        }
         Application.Run(new MainForm());
     }
 
