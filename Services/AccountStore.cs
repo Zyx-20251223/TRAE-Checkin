@@ -64,6 +64,33 @@ public class AccountStore
         return true;
     }
 
+    /// <summary>
+    /// 解析并回填账号唯一 UID（JWT data.id，跨登录会话恒定）。
+    /// 凭账号现有 Token 反查；已回填/无 Token/解析失败则保持原值。幂等。
+    /// </summary>
+    public static string? ResolveUid(TraeAccount account)
+    {
+        if (!string.IsNullOrEmpty(account.AccountUid)) return account.AccountUid;
+        if (string.IsNullOrEmpty(account.Token)) return null;
+        account.AccountUid = TokenUtils.ParseAccountUid(account.Token);
+        return account.AccountUid;
+    }
+
+    /// <summary>
+    /// 在除 exceptId 外的账号中查找 UID 相同的账号（同一手机号重复添加检测）。
+    /// 会顺手回填已存在账号的 AccountUid；未命中返回 null。
+    /// </summary>
+    public TraeAccount? FindAccountWithUid(string? uid, string exceptId)
+    {
+        if (string.IsNullOrEmpty(uid)) return null;
+        foreach (var a in _config.Accounts)
+        {
+            if (a.Id == exceptId) continue;
+            if (ResolveUid(a) == uid) return a;
+        }
+        return null;
+    }
+
     /// <summary>DeviceId 为空时填充与其它账号不重复的 16 位数字；非空保留。</summary>
     public void EnsureDeviceId(TraeAccount account)
     {

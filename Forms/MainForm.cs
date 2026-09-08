@@ -61,6 +61,16 @@ public partial class MainForm : Form
     private readonly ComboBox _cmbAccount = new();
     private readonly CheckBox _chkMember = new() { Text = "会员（连签 +50 到账）", AutoSize = true, ForeColor = TextMain };
     private bool _syncingMember;
+    /// <summary>账号列表项的最近会话状态标记（Id → 展示文案），由「刷新全部状态」填充。</summary>
+    private readonly Dictionary<string, string> _stateMarks = new();
+    /// <summary>「刷新全部状态」进行中标志，防止并发重复刷新。</summary>
+    private bool _refreshingState;
+
+    // 会话状态标记文案（与下拉/日志/汇总一致）
+    private const string MarkValid = "有效";
+    private const string MarkExpired = "需重登";
+    private const string MarkNotLogin = "未登录";
+    private const string MarkDuplicate = "重复账号";
 
     // 飞书通知（设置页）
     private readonly TextBox _txtWebhook = new();
@@ -606,13 +616,17 @@ public partial class MainForm : Form
         btnDel.Click += (_, _) => RemoveAccount();
         top.Controls.Add(btnDel);
 
-        // 第二行：会员开关 + 提示文字独占一行，避免与按钮同排被挤截。
+        // 第二行：刷新状态按钮 + 会员开关 + 提示文字独占一行，避免与按钮同排被挤截。
         // Dock=Bottom + 固定行高（按 DPI 缩放）：保证任何缩放下整行可见
         var hintRow = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = S(42), FlowDirection = FlowDirection.LeftToRight, WrapContents = false, BackColor = CardBg };
+        var btnRefresh = new Button { Text = "刷新全部状态", Width = S(110), Height = S(26), Margin = new Padding(0, S(8), S(10), 0), FlatStyle = FlatStyle.Flat, BackColor = CardBg, ForeColor = TextMain, Cursor = Cursors.Hand };
+        btnRefresh.FlatAppearance.BorderColor = Color.FromArgb(226, 232, 240);
+        btnRefresh.Click += async (_, _) => await RefreshAllAccountStateAsync();
+        hintRow.Controls.Add(btnRefresh);
         _chkMember.Margin = new Padding(0, S(8), S(14), 0);
         _chkMember.CheckedChanged += (_, _) => OnMemberToggled();
         hintRow.Controls.Add(_chkMember);
-        var lbl = new Label { Text = "切换账号即刷新仪表盘。", ForeColor = TextMuted, AutoSize = true, Margin = new Padding(0, S(10), 0, 0) };
+        var lbl = new Label { Text = "刷新后显示各账号会话状态（有效 / 已过期需重登 / 未登录）。", ForeColor = TextMuted, AutoSize = true, Margin = new Padding(0, S(10), 0, 0) };
         hintRow.Controls.Add(lbl);
 
         // 添加顺序（先 Fill 行后 Bottom 行）+ Dock 逆序布局：hintRow 钉在底部，top 填充剩余
@@ -657,10 +671,12 @@ public partial class MainForm : Form
 
     private string ComboText(TraeAccount a)
     {
+        // 状态标记前置（由「刷新全部状态」填充；未刷新过则无前缀）
+        var mark = _stateMarks.TryGetValue(a.Id, out var m) ? "[" + m + "] " : "";
         var days = "";
         if (a.TokenUpdatedAt.HasValue)
             days = "（Token 更新于 " + a.TokenUpdatedAt.Value.ToString("MM-dd HH:mm") + "）";
-        return DisplayName(a) + (a.Enabled ? "" : "（停用）") + days;
+        return mark + DisplayName(a) + (a.Enabled ? "" : "（停用）") + days;
     }
 
     private void OnAccountSelected()
@@ -724,6 +740,7 @@ public partial class MainForm : Form
         if (r != DialogResult.Yes) return;
         try { Directory.Delete(AccountWebViewDir(acc), recursive: true); } catch { /* 忽略删除失败 */ }
         _accountStore.Remove(acc.Id);
+        _stateMarks.Remove(acc.Id);   // 同步清理会话状态标记，避免残留
         _config.Save();
         RefreshAccountCombo();
         SetLog("已删除账号：" + name);
@@ -1140,6 +1157,7 @@ public partial class MainForm : Form
             if (!string.IsNullOrEmpty(renewed))
             {
                 account.Token = renewed;
+                account.AccountUid = TokenUtils.ParseAccountUid(renewed);
                 account.TokenUpdatedAt = DateTime.Now;
                 _config.Save();
                 SetLog("[" + DisplayName(account) + "] token 已通过会话 Cookie 静默换新。");
@@ -1167,14 +1185,120 @@ public partial class MainForm : Form
             SetLog("登录取消。");
             return null;
         }
+
+        // 同一手机号判重：JWT data.id 跨会话恒定，若其它账号已含相同 UID 则拒绝保存本次登录
+        var uid = TokenUtils.ParseAccountUid(token);
+        var dup = _accountStore.FindAccountWithUid(uid, account.Id);
+        if (dup != null)
+        {
+            var dupName = DisplayName(dup);
+            SetLog("拒绝保存：「" + dupName + "」已添加同一 Trae 账号（UID " + uid + "），避免重复。");
+            MessageBox.Show(this,
+                $"检测到「{dupName}」已添加同一 Trae 账号（账号 UID：{uid}），无需重复登录。\n\n" +
+                "为避免产生两个一模一样的账号，本次登录结果未保存。\n如要使用该账号，请在「多账号管理」里直接选择它。",
+                "账号已存在", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return null;
+        }
+
         account.Token = token;
+        account.AccountUid = uid;   // 登录即记录身份标识，供后续直接判重
         if (!string.IsNullOrEmpty(session)) account.Session = session;
         account.TokenUpdatedAt = DateTime.Now;
         _accountStore.EnsureDeviceId(account);
         _config.Save();
+        _stateMarks[account.Id] = MarkValid;   // 新 token 必定有效，避免残留旧标记
+        RefreshAccountCombo();
         SetLog("[" + DisplayName(account) + "] 登录成功，token 已保存。");
         if (account.Id == CurAccount?.Id) UpdateTokenDisplay();
         return await _api.GetStatusAsync(token, account.DeviceId);
+    }
+
+    /// <summary>
+    /// 「刷新全部状态」：逐个校验每个账号的会话（token 失效则尝试用 Cookie 静默换新），
+    /// 把结果写进 _stateMarks 并显示在下拉项前缀；历史遗留的重复 UID 账号会额外标记。
+    /// </summary>
+    private async Task RefreshAllAccountStateAsync()
+    {
+        if (_refreshingState)
+        {
+            SetLog("正在刷新账号状态，请稍候（已忽略本次重复触发）。");
+            return;
+        }
+        if (_config.Accounts.Count == 0)
+        {
+            SetLog("暂无账号，请先点「添加账号」登录。");
+            return;
+        }
+        _refreshingState = true;
+        try
+        {
+            _stateMarks.Clear();
+
+            // 第一遍：逐个校验会话并打标记
+            foreach (var acc in _config.Accounts.ToList())
+            {
+                if (string.IsNullOrWhiteSpace(acc.DeviceId))
+                {
+                    _accountStore.EnsureDeviceId(acc);
+                    _config.Save();
+                }
+                var mark = await ResolveAccountStateMarkAsync(acc);
+                _stateMarks[acc.Id] = mark;
+            }
+
+            // 第二遍：检测历史遗留的重复账号（同 UID 两个条目），标记提示删除
+            MarkDuplicateUids();
+            _config.Save();   // 持久化刷新过程中回填的 AccountUid/换新 token
+
+            // 汇总 + 回填 UI（刷新过程不切换激活账号）
+            var summary = new Dictionary<string, int>();
+            foreach (var acc in _config.Accounts)
+            {
+                var mark = _stateMarks[acc.Id];
+                summary[mark] = summary.GetValueOrDefault(mark) + 1;
+                SetLog($"[{DisplayName(acc)}] 会话状态：{mark}");
+            }
+            RefreshAccountCombo();
+            var parts = summary.Select(kv => $"{kv.Value} 个{kv.Key}");
+            SetLog("状态刷新完成：" + string.Join("，", parts) + "。");
+        }
+        finally
+        {
+            _refreshingState = false;
+        }
+    }
+
+    /// <summary>返回单个账号的会话状态标记文案，不改动账号数据之外的状态。</summary>
+    private async Task<string> ResolveAccountStateMarkAsync(TraeAccount acc)
+    {
+        bool hasCredential = !string.IsNullOrEmpty(acc.Token) || !string.IsNullOrEmpty(acc.Session);
+        if (!hasCredential) return MarkNotLogin;
+
+        // 回填 UID：无现成标记时用现有 Token 反查（换新后 Token 变了，也再补一次）
+        AccountStore.ResolveUid(acc);
+        var st = await GetStatusWithValidTokenAsync(acc);
+        AccountStore.ResolveUid(acc);
+        return st != null && st.code == 0 ? MarkValid : MarkExpired;
+    }
+
+    /// <summary>把 UID 相同的历史遗留重复账号标记为「重复账号」（仅打标记，不自动删除）。</summary>
+    private void MarkDuplicateUids()
+    {
+        var seen = new Dictionary<string, TraeAccount>();
+        foreach (var acc in _config.Accounts)
+        {
+            var uid = AccountStore.ResolveUid(acc);
+            if (string.IsNullOrEmpty(uid)) continue;
+            if (seen.TryGetValue(uid, out var first))
+            {
+                _stateMarks[first.Id] = MarkDuplicate;
+                _stateMarks[acc.Id] = MarkDuplicate;
+            }
+            else
+            {
+                seen[uid] = acc;
+            }
+        }
     }
 
     private void SetLog(string msg)

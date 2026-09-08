@@ -32,9 +32,14 @@ BASE = "https://api.trae.cn"
 
 
 def _post(path, headers, body=""):
+    """POST 请求。非 2xx 不抛 HTTPError，而是以 (status, body) 正常返回，便于上层判断原因。"""
+    import urllib.error
     req = urllib.request.Request(BASE + path, data=body.encode("utf-8"), headers=headers, method="POST")
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return resp.status, resp.read().decode("utf-8", errors="replace")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.status, resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8", errors="replace")
 
 
 def get_token(session: str) -> str:
@@ -49,6 +54,11 @@ def get_token(session: str) -> str:
     status, text = _post("/cloudide/api/v3/common/GetUserToken", headers)
     data = json.loads(text)
     token = (data.get("Result") or {}).get("Token")
+    if status == 401:
+        raise RuntimeError(
+            "账号会话已失效(HTTP 401)：X-Cloudide-Session 可能已过期(~14天有效期)。"
+            "请在浏览器重新登录 trae.cn 并复制新的 Cookie 值，更新到 TRAE_SESSION 后重试。"
+            "原始返回: " + text[:200])
     if status != 200 or not token:
         raise RuntimeError("GetUserToken 失败: HTTP %s %s" % (status, text[:200]))
     return token

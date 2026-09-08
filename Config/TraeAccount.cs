@@ -16,6 +16,11 @@ public class TraeAccount
     public string? Session { get; set; }
     /// <summary>x-device-id（16 位数字，风控关键），每账号独立。</summary>
     public string DeviceId { get; set; } = "";
+    /// <summary>
+    /// 账号唯一标识（JWT payload data.id，16 位数字账号 ID，跨登录会话恒定）。
+    /// 用于识别"同一手机号账号"重复添加；为 null 表示尚未解析（旧数据/未登录）。
+    /// </summary>
+    public string? AccountUid { get; set; }
     public DateTime? TokenUpdatedAt { get; set; }
     /// <summary>该账号最近一次本地签到日期。</summary>
     public DateTime? LastCheckinDate { get; set; }
