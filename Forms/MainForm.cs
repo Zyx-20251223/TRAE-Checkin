@@ -45,6 +45,7 @@ public partial class MainForm : Form
     private readonly Label _lblReward = new() { Font = new Font("Segoe UI", 13, FontStyle.Bold) };
     private readonly Label _lblStreak = new() { Font = new Font("Segoe UI", 13, FontStyle.Bold) };
     private readonly Label _lblCloudStatus = new() { Font = new Font("Segoe UI", 13, FontStyle.Bold) };
+    private readonly Label _lblAccBar = new() { Font = new Font("Segoe UI", 12, FontStyle.Bold), ForeColor = TextMain };
     private readonly HistoryChart _chart = new();
     private readonly ListBox _log = new();
 
@@ -80,6 +81,9 @@ public partial class MainForm : Form
     // 签到记录
     private readonly ListBox _historyList = new();
     private Label _lblLastCheckin = new();
+    private readonly ComboBox _cmbHistoryAccount = new();
+    /// <summary>签到记录页选中的账号 Id；null=「全部账号」（合并展示所有账号历史）。</summary>
+    private string? _historyAccountId;
 
     private System.Windows.Forms.Timer _autoTimer = new();
     /// <summary>签到进行中标志：防止手动按钮、托盘菜单、自动定时器三路并发触发同一轮签到。</summary>
@@ -118,6 +122,18 @@ public partial class MainForm : Form
         }
         catch { /* 读取嵌入图标失败时回退系统图标 */ }
         return SystemIcons.Application;
+    }
+
+    /// <summary>加载内嵌的 GitHub Octocat 图标；失败时返回 null（届时 PictureBox 不显示图片）。</summary>
+    private static Image? LoadGithubIcon()
+    {
+        try
+        {
+            using var s = typeof(MainForm).Assembly.GetManifestResourceStream("TraeCheckin.Assets.github.jpg");
+            if (s != null) return Image.FromStream(s);
+        }
+        catch { /* 读取失败时不显示图标 */ }
+        return null;
     }
 
     /// <summary>某账号专属的 WebView2 用户数据目录（账号间登录态隔离）。</summary>
@@ -214,6 +230,15 @@ public partial class MainForm : Form
             TextAlign = ContentAlignment.MiddleLeft
         };
         header.Controls.Add(subtitle);
+
+        // 侧边栏当前账号昵称：置于标题区下方，不占仪表盘内容空间
+        _lblAccBar.Location = new Point(S(16), S(116));
+        _lblAccBar.Size = new Size(S(180), S(30));
+        _lblAccBar.AutoSize = false;
+        _lblAccBar.TextAlign = ContentAlignment.MiddleLeft;
+        _lblAccBar.ForeColor = Accent;
+        header.Controls.Add(_lblAccBar);
+
         header.Controls.Add(title);
 
         var nav = new Panel { Dock = DockStyle.Top, Height = S(200), BackColor = SidebarBg, Padding = new Padding(0, S(14), 0, 0) };
@@ -299,6 +324,7 @@ public partial class MainForm : Form
     private Panel BuildDashboard()
     {
         var p = new Panel { Dock = DockStyle.Fill, BackColor = ContentBg, Padding = new Padding(S(16)) };
+
         var root = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -374,21 +400,43 @@ public partial class MainForm : Form
     private Panel BuildHistory()
     {
         var p = new Panel { Dock = DockStyle.Fill, BackColor = ContentBg, Padding = new Padding(S(16)) };
+
         _lblLastCheckin = new Label
         {
-            Dock = DockStyle.Top,
+            Dock = DockStyle.Fill,
             Height = S(34),
             Font = new Font("Segoe UI", 11),
             ForeColor = TextMain,
             TextAlign = ContentAlignment.MiddleLeft
         };
+
+        // 顶部工具行：账号选择下拉 + 最近签到信息
+        _cmbHistoryAccount.DropDownStyle = ComboBoxStyle.DropDownList;
+        _cmbHistoryAccount.Width = S(260);
+        _cmbHistoryAccount.Margin = new Padding(0, 0, S(10), 0);
+        _cmbHistoryAccount.FlatStyle = FlatStyle.Flat;
+        _cmbHistoryAccount.SelectedIndexChanged += OnHistoryAccountSelected;
+
+        var toolBar = new Panel
+        {
+            Dock = DockStyle.Top,
+            Height = S(40),
+            Padding = new Padding(0, S(6), 0, 0)
+        };
+        toolBar.Controls.Add(_lblLastCheckin);
+        _lblLastCheckin.Dock = DockStyle.Fill;
+        toolBar.Controls.Add(_cmbHistoryAccount);
+        _cmbHistoryAccount.Dock = DockStyle.Right;
+
         _historyList.Dock = DockStyle.Fill;
         _historyList.BackColor = CardBg;
         _historyList.ForeColor = TextMain;
         _historyList.BorderStyle = BorderStyle.None;
         _historyList.HorizontalScrollbar = false;
+
         p.Controls.Add(_historyList);
-        p.Controls.Add(_lblLastCheckin);
+        p.Controls.Add(toolBar);
+        ReloadHistoryAccountFilter();
         ReloadHistory();
         return p;
     }
@@ -437,18 +485,63 @@ public partial class MainForm : Form
 
         // 版本号+提示固定为页脚（钉在页面底部、不参与滚动），任何缩放下始终可见。
         // 不用 AutoSize：多行 Label + Dock=Bottom 的高度测量在高 DPI 下偏小，第二行会被裁
-        var footer = new Label
+        var footer = new Panel
+        {
+            Dock = DockStyle.Bottom,
+            BackColor = ContentBg,
+            Height = S(46),
+            Padding = new Padding(S(6), 0, S(6), 0)
+        };
+
+        var footerText = new Label
         {
             Text = $"版本：{VersionText}" + Environment.NewLine +
                    "提示：关闭窗口后自动最小化到系统托盘，后台继续自动签到。",
-            Dock = DockStyle.Bottom,
+            Dock = DockStyle.Fill,
             AutoSize = false,
-            Height = S(46),
             ForeColor = TextMuted,
             Font = new Font("Segoe UI", 9),
-            Padding = new Padding(4, 8, 0, 0),
+            Padding = new Padding(S(4), S(8), 0, 0),
             TextAlign = ContentAlignment.TopLeft
         };
+
+        var btnUpdate = new Button
+        {
+            Text = "检查更新",
+            Dock = DockStyle.Right,
+            Width = S(86),
+            Height = S(26),
+            Margin = new Padding(S(6), 0, 0, 0),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Accent,
+            ForeColor = Color.White,
+            Cursor = Cursors.Hand
+        };
+        btnUpdate.Click += async (_, _) => await CheckForUpdateAsync(btnUpdate);
+
+        // GitHub 官方仓库图标链接（点击跳转源仓库）。置于「检查更新」左侧。
+        var githubBtn = new PictureBox
+        {
+            Dock = DockStyle.Right,
+            Image = LoadGithubIcon(),
+            SizeMode = PictureBoxSizeMode.Zoom,
+            Width = S(26),
+            Height = S(26),
+            Margin = new Padding(0, 0, S(6), 0),
+            BackColor = Color.White,
+            Cursor = Cursors.Hand
+        };
+        var githubTooltip = new ToolTip();
+        githubTooltip.SetToolTip(githubBtn, "前往 GitHub 官方仓库");
+        githubBtn.Click += (_, _) =>
+        {
+            try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("https://github.com/star620/TRAE-Automatic-sign-in") { UseShellExecute = true }); }
+            catch { /* 打开浏览器失败时忽略 */ }
+        };
+
+        footer.Controls.Add(footerText);
+        footer.Controls.Add(btnUpdate);
+        footer.Controls.Add(githubBtn);
 
         // AutoScroll 对「Dock=Top + AutoSize」的子控件不会自动出滚动条，
         // 在 grid 高度变化时同步最小滚动范围，内容超出时即可滚动
@@ -458,6 +551,89 @@ public partial class MainForm : Form
         p.Controls.Add(scroll);
         p.Controls.Add(footer);
         return p;
+    }
+
+    /// <summary>
+    /// 「检查更新」：查询上游官方仓库最新 GitHub Release，与当前程序集版本比较。
+    /// 有新版 → 弹窗提示版本差异并提供「去下载」（打开 Releases 页）；无则提示已最新；失败 → 提示原因。
+    /// </summary>
+    private async Task CheckForUpdateAsync(Button btnUpdate)
+    {
+        var originText = btnUpdate.Text;
+        btnUpdate.Enabled = false;
+        btnUpdate.Text = "检查中…";
+        try
+        {
+            var api = new GitHubApiClient();
+            var latest = await api.GetLatestReleaseAsync();
+            if (latest?.TagName == null)
+            {
+                MessageBox.Show(api.LastError ?? "获取最新版本失败，请稍后重试。",
+                    "检查更新", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            // 比较：Release tag 形如 "v1.5.1"，剥掉前导 v 后与程序集版本比较
+            string cur = VersionText;                          // 例如 v1.6.1
+            string tag = latest.TagName.TrimStart('v', 'V');   // 例如 1.5.1
+
+            if (VersionCompare(tag, cur.TrimStart('v', 'V')) > 0)
+            {
+                var r = MessageBox.Show(
+                    $"发现新版本 {latest.TagName}\n\n" +
+                    $"当前版本：{cur}\n最新版本：{latest.TagName}\n" +
+                    (string.IsNullOrWhiteSpace(latest.Body)
+                        ? ""
+                        : $"\n更新内容：\n{System.Text.RegularExpressions.Regex.Replace(latest.Body, "\\r?\\n", Environment.NewLine)}\n") +
+                    "\n是否打开下载页面？",
+                    "发现新版本", MessageBoxButtons.YesNo, MessageBoxIcon.Information);
+                if (r == DialogResult.Yes && !string.IsNullOrWhiteSpace(latest.HtmlUrl))
+                {
+                    try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(latest.HtmlUrl) { UseShellExecute = true }); }
+                    catch { /* 打开浏览器失败时忽略 */ }
+                }
+            }
+            else
+            {
+                MessageBox.Show($"当前已是最新版本：{cur}", "检查更新",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("检查更新失败：" + ex.Message, "检查更新",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            btnUpdate.Enabled = true;
+            btnUpdate.Text = originText;
+        }
+    }
+
+    /// <summary>
+    /// 语义化版本比较（如 1.5.1 vs 1.6.1），仅比较主次修订三位数字。
+    /// a &gt; b 返回正数，相等返回 0。
+    /// </summary>
+    private static int VersionCompare(string? a, string? b)
+    {
+        var pa = ParseVersion(a);
+        var pb = ParseVersion(b);
+        for (int i = 0; i < 3; i++)
+        {
+            if (pa[i] != pb[i]) return pa[i].CompareTo(pb[i]);
+        }
+        return 0;
+    }
+
+    private static int[] ParseVersion(string? s)
+    {
+        var r = new[] { 0, 0, 0 };
+        if (string.IsNullOrEmpty(s)) return r;
+        var parts = s.Split('.');
+        for (int i = 0; i < parts.Length && i < 3; i++)
+            if (int.TryParse(parts[i], out var v)) r[i] = v;
+        return r;
     }
 
     private Control BuildTokenRow()
@@ -616,6 +792,11 @@ public partial class MainForm : Form
         btnDel.Click += (_, _) => RemoveAccount();
         top.Controls.Add(btnDel);
 
+        var btnRename = new Button { Text = "改昵称", Width = S(70), Height = S(34), Margin = new Padding(0, S(6), S(8), 0), FlatStyle = FlatStyle.Flat, BackColor = CardBg, ForeColor = TextMain, Cursor = Cursors.Hand };
+        btnRename.FlatAppearance.BorderColor = Color.FromArgb(226, 232, 240);
+        btnRename.Click += (_, _) => RenameCurAccount();
+        top.Controls.Add(btnRename);
+
         // 第二行：刷新状态按钮 + 会员开关 + 提示文字独占一行，避免与按钮同排被挤截。
         // Dock=Bottom + 固定行高（按 DPI 缩放）：保证任何缩放下整行可见
         var hintRow = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = S(42), FlowDirection = FlowDirection.LeftToRight, WrapContents = false, BackColor = CardBg };
@@ -647,6 +828,7 @@ public partial class MainForm : Form
         _cmbAccount.SelectedIndex = idx >= 0 ? idx : (_config.Accounts.Count > 0 ? 0 : -1);
         SyncMemberCheckbox();
         UpdateTokenDisplay();
+        ReloadHistoryAccountFilter();   // 同步刷新签到记录页的账号下拉
     }
 
     /// <summary>把当前激活账号的会员状态同步到 CheckBox（不触发持久化事件）。</summary>
@@ -722,6 +904,47 @@ public partial class MainForm : Form
 
         await RefreshAllAsync();
         SetLog("已添加账号 " + DisplayName(acc));
+    }
+
+    private void RenameCurAccount()
+    {
+        var acc = CurAccount;
+        if (acc == null) return;
+        var name = PromptText("修改昵称", "为该账号起一个便于识别的昵称（仅本地显示）；清空则恢复默认。", DisplayName(acc));
+        if (name == null) return;   // 取消
+        // 清空或全空格 → 清空 Name，DisplayName() 会自动回退为默认「账号 <UID前4位>」
+        acc.Name = string.IsNullOrWhiteSpace(name) ? string.Empty : name;
+        _config.Save();
+        RefreshAccountCombo();
+        SetLog($"已将账号昵称改为：{DisplayName(acc)}");
+        ReloadHistory();
+        _lblAccBar.Text = DisplayName(acc);   // 同步刷新侧边栏昵称
+    }
+
+    /// <summary>
+    /// 轻量文本输入弹窗：返回用户输入；点取消或留空确认时返回 null。
+    /// </summary>
+    private static string? PromptText(string title, string hint, string initial)
+    {
+        using var dlg = new Form
+        {
+            Text = title,
+            FormBorderStyle = FormBorderStyle.FixedDialog,
+            StartPosition = FormStartPosition.CenterParent,
+            ClientSize = new Size(S(420), S(150)),
+            MaximizeBox = false,
+            MinimizeBox = false,
+            ShowInTaskbar = false,
+            Font = new Font("Segoe UI", 9),
+            BackColor = Color.White
+        };
+        var lbl = new Label { Text = hint, Location = new Point(S(16), S(12)), AutoSize = true, ForeColor = TextMuted };
+        var txt = new TextBox { Location = new Point(S(16), S(44)), Width = S(388), Text = initial };
+        var ok = new Button { Text = "确定", DialogResult = DialogResult.OK, Location = new Point(S(300), S(96)), Size = new Size(S(80), S(32)), BackColor = Accent, ForeColor = Color.White, FlatStyle = FlatStyle.Flat };
+        var cancel = new Button { Text = "取消", DialogResult = DialogResult.Cancel, Location = new Point(S(214), S(96)), Size = new Size(S(80), S(32)), FlatStyle = FlatStyle.Flat };
+        dlg.Controls.Add(lbl); dlg.Controls.Add(txt); dlg.Controls.Add(ok); dlg.Controls.Add(cancel);
+        dlg.AcceptButton = ok; dlg.CancelButton = cancel;
+        return dlg.ShowDialog() != DialogResult.OK ? null : txt.Text.Trim();
     }
 
     private void RemoveAccount()
@@ -888,12 +1111,14 @@ public partial class MainForm : Form
         var remaining = _config.LastRemaining;
         if (acc == null)
         {
+            _lblAccBar.Text = "未添加账号";
             _lblRemaining.Text = "—";
             _lblStatus.Text = "未登录";
             _lblReward.Text = "—";
             await RefreshCloudStatusAsync();
             return;
         }
+        _lblAccBar.Text = DisplayName(acc);
 
         // 兜底：激活账号也确保设备号非空（仪表盘请求同样带 x-device-id）
         if (string.IsNullOrWhiteSpace(acc.DeviceId))
@@ -1387,24 +1612,83 @@ public partial class MainForm : Form
 
     private void ReloadHistory()
     {
+        // 签到记录列表 + 「最近签到」：按签到记录页选中的账号过滤（支持「全部账号」）
         try
         {
-            var acc = CurAccount;
-            var file = acc != null ? HistoryPathFor(acc.Id) : null;
-            var lines = (file != null && File.Exists(file)) ? File.ReadAllLines(file).Reverse().ToList() : new List<string>();
+            List<TraeAccount> targets;
+            if (_historyAccountId == null)
+                targets = _config.Accounts.Where(a => a.Enabled).ToList();
+            else
+            {
+                targets = new List<TraeAccount>();
+                var a = _config.Accounts.FirstOrDefault(x => x.Id == _historyAccountId);
+                if (a != null) targets.Add(a);
+            }
+
+            // 合并各账号历史行，按时间倒序；每行已含 [账号名] 前缀，无需再标注
+            var lines = new List<string>();
+            foreach (var acc in targets)
+            {
+                var file = HistoryPathFor(acc.Id);
+                if (!File.Exists(file)) continue;
+                lines.AddRange(File.ReadAllLines(file));
+            }
+            lines.Sort((x, y) => string.Compare(y.Substring(0, Math.Min(16, y.Length)),
+                                               x.Substring(0, Math.Min(16, x.Length)), StringComparison.Ordinal));
+
             _historyList.Items.Clear();
-            foreach (var line in lines)
-                _historyList.Items.Add(line);
-            _lblLastCheckin.Text = acc != null && acc.LastCheckinDate.HasValue
-                ? $"最近签到（{DisplayName(acc)}）：{acc.LastCheckinDate:yyyy-MM-dd}"
-                : "暂无签到记录";
+            foreach (var line in lines) _historyList.Items.Add(line);
+
+            if (_historyAccountId == null)
+            {
+                // 全部账号：最近一次签到记录（取时间最新的一条）
+                var last = lines.FirstOrDefault();
+                _lblLastCheckin.Text = lines.Count > 0
+                    ? "最近签到：" + last
+                    : "暂无签到记录";
+            }
+            else
+            {
+                var acc = targets.FirstOrDefault();
+                _lblLastCheckin.Text = acc != null && acc.LastCheckinDate.HasValue
+                    ? $"最近签到（{DisplayName(acc)}）：{acc.LastCheckinDate:yyyy-MM-dd}"
+                    : "暂无签到记录";
+            }
         }
         catch { }
 
+        // 仪表盘连签天数 / 趋势图：始终跟随当前账号（CurAccount），不受上面账号筛选影响
         var acc2 = CurAccount;
         var history = acc2 != null ? ParseHistory(acc2) : new List<(DateTime, double)>();
         _lblStreak.Text = ComputeStreak(history) + " 天";
         _chart.SetData(acc2 != null ? ParseTotalHistory(acc2) : new List<(DateTime, double)>());
+    }
+
+    /// <summary>填充签到记录页的账号下拉：第一项「全部账号」+ 各账号。</summary>
+    private void ReloadHistoryAccountFilter()
+    {
+        string? prev = _historyAccountId;
+        _cmbHistoryAccount.SelectedIndexChanged -= OnHistoryAccountSelected;
+        _cmbHistoryAccount.Items.Clear();
+
+        _cmbHistoryAccount.Items.Add("全部账号");
+        foreach (var a in _config.Accounts)
+            if (a.Enabled)
+                _cmbHistoryAccount.Items.Add(DisplayName(a));
+
+        // 恢复原选中；失效则回退「全部账号」
+        int idx = prev == null ? 0 : _config.Accounts.FindIndex(a => a.Id == prev);
+        if (prev != null && idx >= 0) _cmbHistoryAccount.SelectedIndex = idx + 1;
+        else _cmbHistoryAccount.SelectedIndex = 0;
+
+        _cmbHistoryAccount.SelectedIndexChanged += OnHistoryAccountSelected;
+    }
+
+    private void OnHistoryAccountSelected(object? sender, EventArgs e)
+    {
+        int sel = _cmbHistoryAccount.SelectedIndex;
+        _historyAccountId = sel <= 0 ? null : _config.Accounts[sel - 1].Id;
+        ReloadHistory();
     }
 
     /// <summary>解析某账号签到历史，返回 (日期, 积分) 列表。</summary>
