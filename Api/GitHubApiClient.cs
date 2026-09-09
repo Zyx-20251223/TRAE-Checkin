@@ -346,6 +346,54 @@ public class GitHubApiClient
         return false;
     }
 
+    /// <summary>GitHub Releases 最新版本信息（用于「检查更新」）。</summary>
+    public class LatestRelease
+    {
+        /// <summary>发布标签名，如 "v1.5.1"。</summary>
+        public string? TagName { get; set; }
+        /// <summary>发布时间。</summary>
+        public string? PublishedAt { get; set; }
+        /// <summary>Release 网页地址。</summary>
+        public string? HtmlUrl { get; set; }
+        /// <summary>更新说明。</summary>
+        public string? Body { get; set; }
+    }
+
+    /// <summary>
+    /// 获取源仓库最新的 GitHub Release（公开端点，无需认证）。
+    /// 返回 null 表示未找到 Release 或请求失败；失败原因写入 LastError。
+    /// </summary>
+    public async Task<LatestRelease?> GetLatestReleaseAsync()
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, $"https://api.github.com/repos/{SourceOwner}/{SourceRepo}/releases/latest");
+            using var resp = await _http.SendAsync(req);
+            if (!resp.IsSuccessStatusCode)
+            {
+                LastError = $"获取最新版本失败：HTTP {(int)resp.StatusCode}";
+                return null;
+            }
+            var json = await resp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            var rel = new LatestRelease();
+            if (doc.RootElement.TryGetProperty("tag_name", out var tag) && tag.ValueKind == JsonValueKind.String)
+                rel.TagName = tag.GetString();
+            if (doc.RootElement.TryGetProperty("published_at", out var pa) && pa.ValueKind == JsonValueKind.String)
+                rel.PublishedAt = pa.GetString();
+            if (doc.RootElement.TryGetProperty("html_url", out var hu) && hu.ValueKind == JsonValueKind.String)
+                rel.HtmlUrl = hu.GetString();
+            if (doc.RootElement.TryGetProperty("body", out var body) && body.ValueKind == JsonValueKind.String)
+                rel.Body = body.GetString();
+            return rel;
+        }
+        catch (Exception ex)
+        {
+            LastError = "网络错误：" + ex.Message;
+            return null;
+        }
+    }
+
     /// <summary>获取 checkin workflow 最近一次 run 的结论（success/failure/null；运行中为 null）。</summary>
     public async Task<string?> GetLatestRunConclusionAsync(string token, string login)
         => (await GetLatestCheckinRunAsync(token, login, status: null))?.Conclusion;

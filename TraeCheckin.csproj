@@ -23,6 +23,7 @@
 
   <ItemGroup>
     <EmbeddedResource Include="app.ico" />
+    <EmbeddedResource Include="Assets\github.jpg" />
   </ItemGroup>
 
   <ItemGroup>
