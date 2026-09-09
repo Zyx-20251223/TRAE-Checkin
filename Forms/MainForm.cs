@@ -564,11 +564,10 @@ public partial class MainForm : Form
         btnUpdate.Text = "检查中…";
         try
         {
-            var api = new GitHubApiClient();
-            var latest = await api.GetLatestReleaseAsync();
+            var latest = await _ghApi.GetLatestReleaseAsync();
             if (latest?.TagName == null)
             {
-                MessageBox.Show(api.LastError ?? "获取最新版本失败，请稍后重试。",
+                MessageBox.Show(_ghApi.LastError ?? "获取最新版本失败，请稍后重试。",
                     "检查更新", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
@@ -613,9 +612,9 @@ public partial class MainForm : Form
 
     /// <summary>
     /// 语义化版本比较（如 1.5.1 vs 1.6.1），仅比较主次修订三位数字。
-    /// a &gt; b 返回正数，相等返回 0。
+    /// a &gt; b 返回正数，相等返回 0。internal 供单元测试直接验证。
     /// </summary>
-    private static int VersionCompare(string? a, string? b)
+    internal static int VersionCompare(string? a, string? b)
     {
         var pa = ParseVersion(a);
         var pb = ParseVersion(b);
@@ -626,13 +625,25 @@ public partial class MainForm : Form
         return 0;
     }
 
-    private static int[] ParseVersion(string? s)
+    /// <summary>
+    /// 解析版本字符串为 [主, 次, 修订] 三元组。
+    /// 兼容前导 v/V、缺失段（补 0）以及预发布后缀（如 "1.5.1-beta1" 取数字前缀 1），
+    /// 避免把预发布 tag 误判为比旧版本更旧。
+    /// </summary>
+    internal static int[] ParseVersion(string? s)
     {
         var r = new[] { 0, 0, 0 };
         if (string.IsNullOrEmpty(s)) return r;
+        s = s.TrimStart('v', 'V');
+        if (s.Length == 0) return r;
         var parts = s.Split('.');
         for (int i = 0; i < parts.Length && i < 3; i++)
-            if (int.TryParse(parts[i], out var v)) r[i] = v;
+        {
+            // 预发布/扩展段取数字前缀（如 "1-beta1" → 1），数字段直接解析
+            int end = 0;
+            while (end < parts[i].Length && char.IsDigit(parts[i][end])) end++;
+            if (end > 0 && int.TryParse(parts[i][..end], out var v)) r[i] = v;
+        }
         return r;
     }
 
@@ -1641,10 +1652,10 @@ public partial class MainForm : Form
 
             if (_historyAccountId == null)
             {
-                // 全部账号：最近一次签到记录（取时间最新的一条）
+                // 全部账号：最近一次签到记录（取时间最新的一条，截掉积分数尾巴，避免整行过长）
                 var last = lines.FirstOrDefault();
                 _lblLastCheckin.Text = lines.Count > 0
-                    ? "最近签到：" + last
+                    ? "最近签到：" + TrimHistorySummary(last!)
                     : "暂无签到记录";
             }
             else
@@ -1662,6 +1673,14 @@ public partial class MainForm : Form
         var history = acc2 != null ? ParseHistory(acc2) : new List<(DateTime, double)>();
         _lblStreak.Text = ComputeStreak(history) + " 天";
         _chart.SetData(acc2 != null ? ParseTotalHistory(acc2) : new List<(DateTime, double)>());
+    }
+
+    /// <summary>把一行签到历史精简为「时间 + 账号 + 签到成功」：截掉「+X 积分」尾巴。</summary>
+    private static string TrimHistorySummary(string line)
+    {
+        const string suffix = " 签到成功";
+        int i = line.IndexOf(suffix, StringComparison.Ordinal);
+        return i >= 0 ? line[..(i + suffix.Length)] : line;
     }
 
     /// <summary>填充签到记录页的账号下拉：第一项「全部账号」+ 各账号。</summary>

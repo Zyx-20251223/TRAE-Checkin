@@ -96,7 +96,9 @@ public class GitHubApiClient
     internal GitHubApiClient(HttpClient http)
     {
         _http = http;
-        _http.DefaultRequestHeaders.UserAgent.ParseAdd("TraeCheckin/1.4.4");
+        // GitHub API 对缺 User-Agent 的匿名请求返回 403；版本号从程序集动态取，避免升级后残旧
+        var ver = typeof(GitHubApiClient).Assembly.GetName().Version?.ToString(3) ?? "1.0";
+        _http.DefaultRequestHeaders.UserAgent.ParseAdd("TraeCheckin/" + ver);
         _http.DefaultRequestHeaders.Accept.ParseAdd("application/json");
     }
 
