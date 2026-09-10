@@ -34,14 +34,21 @@ BASE = "https://api.trae.cn"
 
 def random_sleep():
     """在签到窗口 [08:00, 08:10] 北京时间内均匀随机分布实际执行时刻。
-    GitHub cron 固定触发于 UTC 00:00（北京时间 08:00），本函数从触发时刻起算
-    random([0, 600]) 秒的随机延迟，使实际签到时间落在 08:00–08:10 之间。
+    GitHub cron 固定触发于 UTC 00:00（北京时间 08:00）。
+    本函数计算从北京时间 08:00 起算的随机等待时间（0–600 秒），
+    通过构造一个「目标 UTC 时间 = 现在 + 待等待时长」的方式实现，
+    避免依赖 cron 触发瞬间的实际时间戳。
     """
     wait_seconds = random.randint(0, 600)
-    # 预计签到时刻（cron 触发后 wait_seconds 秒，北京时间 +8h）
+    # 目标签到时刻：北京时间 08:00 + wait_seconds
     target_bj = (datetime.datetime.utcnow() + datetime.timedelta(hours=8, seconds=wait_seconds)).strftime("%H:%M")
     print("[随机延迟] 将等待 %d 秒（%.1f 分钟），预计签到时间 ≈ 北京时间 %s" % (wait_seconds, wait_seconds / 60, target_bj))
-    time.sleep(wait_seconds)
+    # 计算距离目标时刻的秒数（目标 = cron 触发时刻 UTC 00:00 + wait_seconds）
+    cron_base_utc = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    target_utc = cron_base_utc + datetime.timedelta(seconds=wait_seconds)
+    sleep_secs = (target_utc - datetime.datetime.utcnow()).total_seconds()
+    if sleep_secs > 0:
+        time.sleep(sleep_secs)
 
 
 def _post(path, headers, body=""):
