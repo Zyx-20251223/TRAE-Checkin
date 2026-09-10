@@ -2,14 +2,10 @@ name: Trae Daily Checkin
 
 on:
   schedule:
-    # 每天 5 个候选触发点（北京时间 08:00–16:00，间隔 2 小时）
-    # GitHub 只运行 schedule 中的第一个触发点，其余静默跳过
-    # 这样每天实际签到时间在 08:00–16:00 之间随机出现
-    - cron: "0 0 * * *"   # 08:00
-    - cron: "0 2 * * *"   # 10:00
-    - cron: "0 4 * * *"   # 12:00
-    - cron: "0 6 * * *"   # 14:00
-    - cron: "0 8 * * *"   # 16:00
+    # 每日固定触发（UTC 00:00 = 北京时间 08:00）
+    # 签到时刻的随机性由 checkin.py 内的 random_sleep() 提供
+    # 实际签到时间均匀分布在 08:00–20:00 北京时间（±6h 随机偏移）
+    - cron: "0 0 * * *"
   workflow_dispatch: {}
 
 permissions:

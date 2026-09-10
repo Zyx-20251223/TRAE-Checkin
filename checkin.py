@@ -32,6 +32,17 @@ import urllib.request
 BASE = "https://api.trae.cn"
 
 
+def random_sleep():
+    """在签到窗口 [08:00, 20:00] 北京时间内均匀随机分布实际执行时刻。
+    GitHub cron 固定触发于 UTC 00:00（北京时间 08:00），脚本启动后等待
+    random([0, 43200]) 秒，使实际签到时间均匀落在 08:00–20:00 之间。
+    """
+    wait_seconds = random.randint(0, 43200)
+    target_bj = (datetime.datetime.utcnow() + datetime.timedelta(hours=8, seconds=wait_seconds)).strftime("%H:%M")
+    print("[随机延迟] 将等待 %d 秒，预计签到时间 ≈ 北京时间 %s" % (wait_seconds, target_bj))
+    time.sleep(wait_seconds)
+
+
 def _post(path, headers, body=""):
     """POST 请求。非 2xx 不抛 HTTPError，而是以 (status, body) 正常返回，便于上层判断原因。"""
     import urllib.error
@@ -145,6 +156,9 @@ def main():
     if not accounts:
         print("错误：缺少环境变量 TRAE_SESSION")
         sys.exit(1)
+
+    # 随机延迟：使实际签到时刻均匀分布在 08:00–20:00 北京时间
+    random_sleep()
 
     webhook = os.environ.get("FEISHU_WEBHOOK", "").strip()
     ok_names, fail_names = [], []
