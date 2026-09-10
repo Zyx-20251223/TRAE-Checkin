@@ -34,11 +34,11 @@ BASE = "https://api.trae.cn"
 
 def random_sleep():
     """在签到窗口 [08:00, 08:10] 北京时间内均匀随机分布实际执行时刻。
-    GitHub cron 固定触发于 UTC 00:00（北京时间 08:00），脚本启动后等待
-    random([0, 600]) 秒（≤10min，远小于 GitHub Actions 6h 超时），
-    使实际签到时间落在 08:00–08:10 之间。
+    GitHub cron 固定触发于 UTC 00:00（北京时间 08:00），本函数从触发时刻起算
+    random([0, 600]) 秒的随机延迟，使实际签到时间落在 08:00–08:10 之间。
     """
     wait_seconds = random.randint(0, 600)
+    # 预计签到时刻（cron 触发后 wait_seconds 秒，北京时间 +8h）
     target_bj = (datetime.datetime.utcnow() + datetime.timedelta(hours=8, seconds=wait_seconds)).strftime("%H:%M")
     print("[随机延迟] 将等待 %d 秒（%.1f 分钟），预计签到时间 ≈ 北京时间 %s" % (wait_seconds, wait_seconds / 60, target_bj))
     time.sleep(wait_seconds)
