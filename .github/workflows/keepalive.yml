@@ -1,0 +1,17 @@
+name: Keepalive
+
+# 防止公开仓库 60 天无活动导致定时 workflow 被 GitHub 自动停用
+on:
+  schedule:
+    - cron: "30 0 * * 1" # 每周一北京时间 08:30
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gautamkrishnar/keepalive-workflow@v2

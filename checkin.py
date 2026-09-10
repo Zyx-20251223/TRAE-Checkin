@@ -26,6 +26,7 @@ import json
 import os
 import random
 import sys
+import time
 import urllib.request
 
 BASE = "https://api.trae.cn"
@@ -78,6 +79,27 @@ def checkin(token: str, device_id: str) -> dict:
         return {"http": status, "body": json.loads(text)}
     except json.JSONDecodeError:
         return {"http": status, "body": {"raw": text}}
+
+
+def checkin_with_retry(token: str, device_id: str, attempts: int = 3):
+    """对风控 9074（服务繁忙/参与用户多）做退避重试，其余结果原样返回。"""
+    last = None
+    for i in range(attempts):
+        last = checkin(token, device_id)
+        body = last.get("body", {})
+        ok = last["http"] == 200 and (body.get("code", -1) == 0 or body.get("checked_in", False))
+        if ok:
+            return last
+        code = body.get("code", -1)
+        msg = str(body.get("message", ""))
+        if code == 9074 or "9074" in msg or "繁忙" in msg or "太多" in msg:
+            if i < attempts - 1:
+                wait = 30 * (i + 1)
+                print("[重试] 命中风控(code=%s, %s)，%d 秒后进行第 %d 次尝试" % (code, msg[:60], wait, i + 2))
+                time.sleep(wait)
+                continue
+        return last
+    return last
 
 
 def notify_feishu(webhook, text):
@@ -135,7 +157,7 @@ def main():
         try:
             token = get_token(session)
             print("[%s] 已换取新 JWT，长度=%d" % (name, len(token)))
-            result = checkin(token, device_id)
+            result = checkin_with_retry(token, device_id)
             body = result["body"]
             code = body.get("code", -1)
             checked = body.get("checked_in", False)
