@@ -33,22 +33,20 @@ BASE = "https://api.trae.cn"
 
 
 def random_sleep():
-    """在签到窗口 [08:00, 08:10] 北京时间内均匀随机分布实际执行时刻。
-    GitHub cron 固定触发于 UTC 00:00（北京时间 08:00）。
-    本函数计算从北京时间 08:00 起算的随机等待时间（0–600 秒），
-    通过构造一个「目标 UTC 时间 = 现在 + 待等待时长」的方式实现，
-    避免依赖 cron 触发瞬间的实际时间戳。
+    """签到时刻随机化。
+
+    GitHub Actions 的 schedule 触发时间固定（本方案为 UTC 00:00 = 北京时间 08:00），
+    在此基准上随机延迟 0–60 分钟，使实际签到时刻落在 [08:00, 09:00] 北京时间内。
+    workflow_dispatch 手动触发时不延迟（立即执行，方便测试）。
     """
-    wait_seconds = random.randint(0, 600)
-    # 目标签到时刻：北京时间 08:00 + wait_seconds
+    import os
+    event = os.environ.get("GITHUB_EVENT_NAME", "")
+    if event == "workflow_dispatch":
+        return  # 手动触发：立即执行，不延迟
+    wait_seconds = random.randint(0, 3600)
     target_bj = (datetime.datetime.utcnow() + datetime.timedelta(hours=8, seconds=wait_seconds)).strftime("%H:%M")
     print("[随机延迟] 将等待 %d 秒（%.1f 分钟），预计签到时间 ≈ 北京时间 %s" % (wait_seconds, wait_seconds / 60, target_bj))
-    # 计算距离目标时刻的秒数（目标 = cron 触发时刻 UTC 00:00 + wait_seconds）
-    cron_base_utc = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    target_utc = cron_base_utc + datetime.timedelta(seconds=wait_seconds)
-    sleep_secs = (target_utc - datetime.datetime.utcnow()).total_seconds()
-    if sleep_secs > 0:
-        time.sleep(sleep_secs)
+    time.sleep(wait_seconds)
 
 
 def _post(path, headers, body=""):
