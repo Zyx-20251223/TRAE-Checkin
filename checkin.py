@@ -82,6 +82,27 @@ def get_token(session: str) -> str:
     return token
 
 
+def check_status(token: str, device_id: str) -> dict:
+    """查询今日签到状态与积分信息。
+
+    status 接口返回 checked_in、code、credits、enable、message 等字段，
+    其中 credits 是每日签到可获得的积分数额（免费 150 / 付费 200）。
+    claim 接口只返回 {code, message}，不含 credits，故积分信息从此处获取。
+    """
+    headers = {
+        "Authorization": "Cloud-IDE-JWT " + token,
+        "X-User-Region": "cn",
+        "x-device-id": device_id,
+        "Content-Type": "application/json",
+        "User-Agent": "TraeCheckin/1.0",
+    }
+    status, text = _post("/trae/api/v2/ug/checkin_credits/status", headers, "{}")
+    try:
+        return {"http": status, "body": json.loads(text)}
+    except json.JSONDecodeError:
+        return {"http": status, "body": {"raw": text}}
+
+
 def checkin(token: str, device_id: str) -> dict:
     """执行每日签到（claim）。"""
     headers = {
@@ -163,7 +184,6 @@ def main():
         print("错误：缺少环境变量 TRAE_SESSION")
         sys.exit(1)
 
-    # 随机延迟：使实际签到时刻均匀分布在 08:00–20:00 北京时间
     random_sleep()
 
     webhook = os.environ.get("FEISHU_WEBHOOK", "").strip()
@@ -177,14 +197,26 @@ def main():
         try:
             token = get_token(session)
             print("[%s] 已换取新 JWT，长度=%d" % (name, len(token)))
+
+            # 先查状态：claim 接口不返回 credits 字段，积分信息从 status 获取
+            st = check_status(token, device_id)
+            st_body = st.get("body", {})
+            already_checked = st_body.get("checked_in", False)
+            daily_credits = st_body.get("credits", 0)
+
+            if already_checked:
+                print("[%s] 今日已签到，每日积分额度：%s" % (name, daily_credits))
+                ok_names.append(name)
+                continue
+
+            # 未签到，执行 claim
             result = checkin_with_retry(token, device_id)
             body = result["body"]
             code = body.get("code", -1)
             checked = body.get("checked_in", False)
             ok = (result["http"] == 200) and (code == 0 or checked)
-            credits = body.get("credits", 0)
             if ok:
-                print("[%s] 签到成功，本次获得：%s 积分" % (name, credits))
+                print("[%s] 签到成功，获得：%s 积分" % (name, daily_credits))
                 ok_names.append(name)
             else:
                 reason = body.get("message") or ("HTTP %s" % result["http"])
