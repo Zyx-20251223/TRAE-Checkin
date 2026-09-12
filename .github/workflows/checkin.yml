@@ -25,6 +25,8 @@ jobs:
 
       - name: Run checkin
         env:
+          TRAE_TOKEN: ${{ secrets.TRAE_TOKEN }}
+          TRAE_TOKEN_DEVICE_ID: ${{ secrets.TRAE_TOKEN_DEVICE_ID }}
           TRAE_SESSION: ${{ secrets.TRAE_SESSION }}
           TRAE_DEVICE_ID: ${{ secrets.TRAE_DEVICE_ID }}
           TRAE_SESSION_2: ${{ secrets.TRAE_SESSION_2 }}

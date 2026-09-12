@@ -11,7 +11,10 @@ Trae 每日签到脚本（GitHub Actions 版）
 依赖：仅标准库，无第三方依赖。
 
 环境变量：
-  TRAE_SESSION        账号 1 的 X-Cloudide-Session Cookie（必填；后端兼容单账号部署）
+  TRAE_TOKEN          账号 1 的设备 JWT（选填，本地 trae_feed.py 喂养，约 +14 天有效期）。
+                      设置时优先直签，跳过 Cookie 兑换；失效(401/403)自动降级 TRAE_SESSION。
+  TRAE_TOKEN_DEVICE_ID  TRAE_TOKEN 对应的绑定设备号（选填，缺省沿用 TRAE_DEVICE_ID）
+  TRAE_SESSION        账号 1 的 X-Cloudide-Session Cookie（TRAE_TOKEN 未设/失效时的兑换路径）
   TRAE_DEVICE_ID      账号 1 的 x-device-id，16 位数字（选填，缺省随机）
   TRAE_SESSION_N      第 N(N≥2) 个账号的会话 Cookie；缺失即停止读取更多账号
   TRAE_DEVICE_ID_N    第 N 个账号的 x-device-id（选填，缺省随机）
@@ -159,10 +162,11 @@ def beijing_now_str():
 
 
 def iter_sessions():
-    """按顺序产出 (账号序号, session, device_id)。账号 1 读 TRAE_SESSION；
-    之后依次读 TRAE_SESSION_2, TRAE_SESSION_3… 直到缺空为止。"""
+    """按顺序产出 (账号序号, session, device_id)。账号 1 读 TRAE_TOKEN（优先）或
+    TRAE_SESSION；之后依次读 TRAE_SESSION_2, TRAE_SESSION_3… 直到缺空为止。"""
     s = os.environ.get("TRAE_SESSION", "").strip()
-    if s:
+    fed = os.environ.get("TRAE_TOKEN", "").strip()
+    if s or fed:
         yield 1, s, os.environ.get("TRAE_DEVICE_ID", "").strip()
     n = 2
     while True:
@@ -181,7 +185,7 @@ def random_device_id():
 def main():
     accounts = list(iter_sessions())
     if not accounts:
-        print("错误：缺少环境变量 TRAE_SESSION")
+        print("错误：缺少环境变量 TRAE_TOKEN 或 TRAE_SESSION")
         sys.exit(1)
 
     random_sleep()
@@ -195,11 +199,29 @@ def main():
         device_id = device_id or random_device_id()
         print("[%s] device_id=%s" % (name, device_id))
         try:
-            token = get_token(session)
-            print("[%s] 已换取新 JWT，长度=%d" % (name, len(token)))
+            token = None
+            used_fed = False
+            if index == 1:
+                fed = os.environ.get("TRAE_TOKEN", "").strip()
+                if fed:
+                    # 本地喂养模式：设备 JWT 直签，免 Cookie 兑换（约 +14 天有效）
+                    token = fed
+                    used_fed = True
+                    fed_device = os.environ.get("TRAE_TOKEN_DEVICE_ID", "").strip()
+                    if fed_device:
+                        device_id = fed_device
+                    print("[%s] 使用本地喂养的 TRAE_TOKEN 直签(device_id=%s)" % (name, device_id))
+            if token is None:
+                token = get_token(session)
+                print("[%s] 已换取新 JWT，长度=%d" % (name, len(token)))
 
             # 先查状态：claim 接口不返回 credits 字段，积分信息从 status 获取
             st = check_status(token, device_id)
+            if used_fed and st["http"] in (401, 403) and session:
+                # TRAE_TOKEN 过期且本地喂养中断 → 降级 Cookie 兑换路径兜底
+                print("[%s] TRAE_TOKEN 已失效(HTTP %s)，降级 TRAE_SESSION 兑换路径" % (name, st["http"]))
+                token = get_token(session)
+                st = check_status(token, device_id)
             st_body = st.get("body", {})
             already_checked = st_body.get("checked_in", False)
             daily_credits = st_body.get("credits", 0)
